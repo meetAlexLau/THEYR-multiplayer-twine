@@ -7,7 +7,7 @@ const { Server } = require("socket.io");
 const io = new Server(server);
 const mongoose = require('mongoose');
 const MongoState = require('./MongoStateSchema');
-
+let serverStore = Redux.createStore(reducer);
 app.use("/static", express.static('./static/'));
 
 const PORT = process.env.PORT || 5000
@@ -35,7 +35,8 @@ io.on('connection', (socket) => {
 		console.log("SERVER RECEIVES NEW USER:", id);
 
 		// If server has global state, send it to the user
-		if (typeof gstate !== 'undefined') {
+		if (gstate !== undefined) {
+			console.log('gstate', gstate)
 			io.to(id).emit('new connection', gstate)
 		}
 
@@ -49,12 +50,14 @@ io.on('connection', (socket) => {
 	})
 
 	// Difference found in SugarCube State, update all clients and MongoDB
-	socket.on('difference', (state) => {
-		delete state['userId']	// Removes userId from the global state (Prevents users overriding each other's userId variables)
-		serverStore.dispatch({ type: 'UPDATE', payload: state })
-		socket.broadcast.emit('difference', state)
+	socket.on('difference', (diff) => {
+		if(diff && diff.userId){
+		delete diff['userId']
+		}	// Removes userId from the global state (Prevents users overriding each other's userId variables)
+		serverStore.dispatch({ type: 'UPDATE', payload: diff })
+		socket.broadcast.emit('difference', diff)
 
-		updateMongoState(state)
+		updateMongoState(diff)
 	})
 });
 
@@ -68,12 +71,16 @@ function reducer(state, action) {
 }
 
 // Updates the state in MongoDB when a client makes a change to the game
-async function updateMongoState(state) {
+async function updateMongoState(diff) {
+
 	try {
 		let oldMongoState = await MongoState.findOne()
-		
+
+		let mongoStateObj = Object.fromEntries(oldMongoState.state)	// Converts Mongo State into Obj
+		let newState={...mongoStateObj, ...diff}
+		console.log(newState)
 		const updatedState = {
-			state: state
+			state: newState
 		}
 
 		await MongoState.findByIdAndUpdate(oldMongoState._id, updatedState)		
@@ -92,7 +99,7 @@ async function retrieveMongoState() {
 		console.log("Initializing Mongo State")
 		let newState = new MongoState({
 			state: {
-				users: {}
+			
 			}
 		})
 		newState.save()
@@ -103,7 +110,7 @@ async function retrieveMongoState() {
 }
 
 
-var serverStore = Redux.createStore(reducer);
+
 server.listen(PORT, () => {
 	console.log(`Server listening at http://localhost:${PORT}`)
 })
